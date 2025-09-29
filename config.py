@@ -12,7 +12,7 @@ class Config:
         self.bootstrap_servers: List[Dict[str, Any]] = [
             {
                 "host": os.getenv("BOOTSTRAP_HOST_1", "127.0.0.1").strip(),
-                "port": int(os.getenv("BOOTSTRAP_PORT_1", "8081").strip()),
+                "port": int(os.getenv("BOOTSTRAP_PORT_1", "8082").strip()),
                 "pubkey": os.getenv("BOOTSTRAP_PUBKEY_1")  # base64url encoded
             },
             {
