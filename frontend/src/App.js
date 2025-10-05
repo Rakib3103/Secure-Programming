@@ -1,17 +1,23 @@
+import { Route, BrowserRouter as Router, Routes } from 'react-router-dom';
+import Chat from './pages/Chat';
+import Login from './pages/Login';
+import { SocpProvider } from './SocpContext';
+
+import 'bootstrap/dist/css/bootstrap.min.css';
+import '@chatscope/chat-ui-kit-styles/dist/default/styles.min.css';
 import './App.css';
-import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom';
-import ChatPage from './pages/Chatpage';
-import LoginPage from './pages/LoginPage';
 
 function App() {
   return (
-    <Router>
+    <SocpProvider>
+      <Router>
         <Routes>
-          <Route path="/" element={<ChatPage />} />
-          <Route path="/login" element={<LoginPage />} />
-           <Route path="*" element={<div>Not found</div>} />
+          <Route path="/" element={<Chat />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="*" element={<div>Not found</div>} />
         </Routes>
-    </Router>
+      </Router>
+    </SocpProvider>
   );
 }
 

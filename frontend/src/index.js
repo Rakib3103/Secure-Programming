@@ -1,21 +1,11 @@
 import React from 'react';
-import ReactDOM from 'react-dom/client';
-import './index.css';
-import 'antd/dist/reset.css';
+import ReactDOM from 'react-dom';
 import App from './App';
-import reportWebVitals from './reportWebVitals';
-import LoginPage from './pages/LoginPage';
-import ChatPage from './pages/Chatpage';
+import './index.css';
 
-
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(
+ReactDOM.render(
   <React.StrictMode>
-    {/* <LoginPage/> */}
-     <ChatPage/>
-     {/* <MyChat/> */}
-     {/* <App/> */}
-  </React.StrictMode>
+    <App />
+  </React.StrictMode>,
+  document.getElementById('root'),
 );
-
-reportWebVitals();

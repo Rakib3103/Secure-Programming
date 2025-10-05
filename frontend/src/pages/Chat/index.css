@@ -1,0 +1,40 @@
+.cs-conversation__info {
+    min-height: 1.5em;
+}
+
+body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+}
+
+.cs-message-input {
+    background-color: #f8f9fa;
+    border-top: 1px solid #e9ecef;
+}
+
+.cs-chat-container {
+    background-color: #ffffff;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.cs-message__content {
+    background-color: #f0f2f5;
+    border-radius: 18px;
+    padding: 8px 12px;
+}
+
+.cs-message--outgoing .cs-message__content {
+    background-color: #0084ff;
+    color: white;
+}
+
+.cs-chat-container .cs-message-list {
+    background-color: #ffffff;
+    padding: 16px;
+}
+
+.cs-main-container {
+    height: 100vh;
+}
