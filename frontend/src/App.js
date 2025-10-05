@@ -6,7 +6,6 @@ import LoginPage from './pages/LoginPage';
 function App() {
   return (
     <Router>
-
         <Routes>
           <Route path="/" element={<ChatPage />} />
           <Route path="/login" element={<LoginPage />} />

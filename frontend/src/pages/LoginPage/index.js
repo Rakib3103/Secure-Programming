@@ -6,7 +6,7 @@ import './index.css'
 function LoginPage() {
   const onFinish = (values) => {
     console.log('Received values of form: ', values);
-    // TODO: 在这里调用后端 / WebSocket 登录逻辑
+    // TODO: To implement the websocket here
   };
   return (
     <div className='login-container'>

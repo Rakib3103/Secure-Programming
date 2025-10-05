@@ -6,15 +6,15 @@ import App from './App';
 import reportWebVitals from './reportWebVitals';
 import LoginPage from './pages/LoginPage';
 import ChatPage from './pages/Chatpage';
-import ChatArea from './component/ChatArea';
+
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>
-    <App />
-    {/*  <ChatArea />  */}
     {/* <LoginPage/> */}
-    {/* <ChatPage/>  */}
+     <ChatPage/>
+     {/* <MyChat/> */}
+     {/* <App/> */}
   </React.StrictMode>
 );
 
