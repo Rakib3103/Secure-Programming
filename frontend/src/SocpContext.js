@@ -1,3 +1,4 @@
+/* eslint-disable no-unused-vars */
 import React, {
   createContext,
   useContext,
@@ -9,8 +10,8 @@ import React, {
 import useWebSocket, { ReadyState } from 'react-use-websocket';
 import {
   generateRsaKeypair,
-  loadPrivateKey,
-  loadPublicKey,
+  loadPrivateKey as loadPrivateKeyOAEP, // forge privateKeyFromPem
+  loadPublicKey as loadPublicKeyOAEP, // forge publicKeyFromPem
   rsaDecrypt,
   aesDecrypt,
   verifyContentSig,
@@ -43,6 +44,7 @@ const MESSAGE_TYPES = {
   PUBLIC_CHANNEL_UPDATED: 'PUBLIC_CHANNEL_UPDATED',
   PUBLIC_CHANNEL_KEY_SHARE: 'PUBLIC_CHANNEL_KEY_SHARE',
   COMMAND_RESPONSE: 'COMMAND_RESPONSE',
+  COMMAND: 'COMMAND',
   FILE_START: 'FILE_START',
   FILE_CHUNK: 'FILE_CHUNK',
   FILE_END: 'FILE_END',
@@ -56,14 +58,20 @@ const MESSAGE_TYPES = {
 const SocpCtx = createContext(null);
 
 export function SocpProvider({ children }) {
-  const serverUri = useState(
-    process.env.REACT_APP_WS_URL || 'ws://127.0.0.1:8080/ws',
-  );
+  const serverUri = process.env.REACT_APP_WS_URL || 'ws://127.0.0.1:8080/ws';
   const [userId, setUserId] = useState('');
   const [privateKeyB64, setPrivateKeyB64] = useState(null);
   const [publicKeyB64, setPublicKeyB64] = useState(null);
   const [knownPubkeys, setKnownPubkeys] = useState({});
   const [groupKeys, setGroupKeys] = useState({});
+  // onlineUsers: [{ userId, meta }]
+  const [onlineUsers, setOnlineUsers] = useState([]);
+  // messages: { [peerId]: [{dir: "in"|"out", text: string, ts: number}] }
+  const [messages, setMessages] = useState({});
+  const [activePeerId, setActivePeerId] = useState(null);
+  
+  console.log({ onlineUsers});
+  
 
   useEffect(() => {
     const generatedUserId = crypto.randomUUID();
@@ -74,29 +82,27 @@ export function SocpProvider({ children }) {
     });
   }, []);
 
-  // onlineUsers: [{ userId, meta }]
-  const [onlineUsers, setOnlineUsers] = useState([]);
-  // messages: { [peerId]: [{dir: "in"|"out", text: string, ts: number}] }
-  const [messages, setMessages] = useState({});
-  const [activePeerId, setActivePeerId] = useState(null);
+  const sendUserHello = useCallback(
+    sendMessage => {
+      if (!publicKeyB64 || !userId) return;
 
-  const sendUserHello = useCallback((sendMessage) => {
-    if (!publicKeyB64 || !userId) return;
-    const payload = {
-      //TODO: check correct value
-      client: 'local-cli-v1',
-      pubkey: publicKeyB64,
-      enc_pubkey: publicKeyB64,
-    };
-    const body = createBody(
-      MESSAGE_TYPES.USER_HELLO,
-      userId,
-      'server',
-      payload,
-    );
-    sendMessage(body);
-    console.info('[SOCP] → USER_HELLO sent', body);
-  }, [publicKeyB64, userId]);
+      const payload = {
+        //TODO: check correct value
+        client: 'local-cli-v1',
+        pubkey: publicKeyB64,
+        enc_pubkey: publicKeyB64,
+      };
+      const body = createBody(
+        MESSAGE_TYPES.USER_HELLO,
+        userId,
+        'server',
+        payload,
+      );
+      sendMessage(body);
+      console.info('[SOCP] → USER_HELLO sent', body);
+    },
+    [publicKeyB64, userId],
+  );
 
   const {
     sendJsonMessage,
@@ -105,12 +111,33 @@ export function SocpProvider({ children }) {
   } = useWebSocket(serverUri, {
     share: true,
     shouldReconnect: () => true,
-    reconnectAttempts: process.env.RECONNECT_ATTEMPTS || 3,
+    reconnectAttempts: Number(process.env.RECONNECT_ATTEMPTS) || 3,
     reconnectInterval: 2000,
     onOpen: () => {
-      sendUserHello(sendJsonMessage);
+      console.log('[SOCP] WebSocket connection opened');
     },
+    onClose: event => console.warn('[SOCP] 🔴 Connection closed', event),
+    onError: event => console.error('[SOCP] ⚠️ WebSocket error', event),
   });
+
+  useEffect(() => {
+    if (
+      readyState === ReadyState.OPEN &&
+      publicKeyB64 &&
+      privateKeyB64 &&
+      userId
+    ) {
+      console.log('[SOCP] Conditions met → sending USER_HELLO');
+      sendUserHello(sendJsonMessage);
+    }
+  }, [
+    readyState,
+    publicKeyB64,
+    privateKeyB64,
+    userId,
+    sendJsonMessage,
+    sendUserHello,
+  ]);
 
   const onUserDeliver = useCallback(async msg => {
     try {
@@ -122,14 +149,14 @@ export function SocpProvider({ children }) {
       const to = msg.to;
       const ts = msg.ts;
 
-      const privKey = await loadPrivateKey(privateKeyB64);
-      const senderPubKey = await loadPublicKey(senderPubB64);
+      const privKey = await loadPrivateKeyOAEP(privateKeyB64);
+      const senderPub = await loadPublicKeyOAEP(senderPubB64);
 
       // 1️⃣ Try decrypt as Direct Message (RSA)
       try {
         const plaintext = await rsaDecrypt(privKey, ciphertext);
         const verified = await verifyContentSig(
-          senderPubKey,
+          senderPub,
           ciphertext,
           senderId,
           to,
@@ -142,7 +169,7 @@ export function SocpProvider({ children }) {
           return { type: 'dm', senderId, text };
         }
       } catch (err) {
-        // not a DM
+        console.error('[SOCP] Failed to decrypt direct message:', err);
       }
 
       // 2️⃣ Try decrypt as Public Message (AES)
@@ -155,7 +182,7 @@ export function SocpProvider({ children }) {
         const aesKey = groupKeys['public'];
         const plaintext = await aesDecrypt(aesKey, ciphertext);
         const verified = await verifyPublicContentSig(
-          senderPubKey,
+          senderPub,
           ciphertext,
           senderId,
           ts,
@@ -175,31 +202,37 @@ export function SocpProvider({ children }) {
       console.error('[SOCP] message processing failed:', err);
       return null;
     }
-  }, []);
+  }, [privateKeyB64, groupKeys]);
 
-  const onCommandResponse = useCallback(msg => {
-    try {
-      const payload = msg.payload;
-      const command = payload.command;
-      const response = JSON.parse(payload.response || '{}');
+  // const onCommandResponse = useCallback(msg => {
+  //   try {
+  //     const payload = msg.payload;
+  //     const command = payload.command;
+  //     const response = JSON.parse(payload.response || '{}');
+  //     console.log({ response });
 
-      switch (command) {
-        case '/list': {
-          const users = response.users || [];
-          console.info('[SOCP] Online users:', users.join(', '));
+  //     switch (command) {
+  //       case '/list': {
+  //         const usersArr = Array.isArray(response.users) ? response.users : [];
+  //         setKnownPubkeys(prev => {
+  //           const next = { ...prev };
+  //           usersArr.forEach(u => {
+  //             if (u.user_id && u.pubkey) next[u.user_id] = u.pubkey;
+  //           });
+  //           return next;
+  //         });
+  //         setOnlineUsers(usersArr.map(u => ({ userId: u.user_id, meta: {} })));
+  //         break;
+  //       }
 
-          setOnlineUsers(users.map(u => ({ userId: u, meta: {} })));
-          break;
-        }
-
-        default:
-          console.error('[SOCP] Unknown command response:', command, payload);
-          break;
-      }
-    } catch (err) {
-      console.error('[SOCP] Failed to handle COMMAND_RESPONSE:', err);
-    }
-  }, []);
+  //       default:
+  //         console.error('[SOCP] Unknown command response:', command, payload);
+  //         break;
+  //     }
+  //   } catch (err) {
+  //     console.error('[SOCP] Failed to handle COMMAND_RESPONSE:', err);
+  //   }
+  // }, []);
 
   const onUserAdvertise = useCallback(
     msg => {
@@ -237,7 +270,7 @@ export function SocpProvider({ children }) {
         if (!myShare || !myShare.wrapped_public_channel_key) return;
 
         try {
-          const privKey = await loadPrivateKey(privateKeyB64);
+          const privKey = await loadPrivateKeyOAEP(privateKeyB64);
           const groupKeyBuf = await rsaDecrypt(
             privKey,
             myShare.wrapped_public_channel_key,
@@ -294,7 +327,6 @@ export function SocpProvider({ children }) {
     async (targetId, messageText) => {
       if (!targetId || !messageText?.trim()) return;
 
-      // 1) Kiểm tra đã biết pubkey của người nhận chưa
       const targetPubB64 = knownPubkeys[targetId];
       if (!targetPubB64) {
         console.error(`[SOCP] Unknown user: ${targetId}`);
@@ -302,8 +334,8 @@ export function SocpProvider({ children }) {
       }
 
       try {
-        const targetPubKey = await loadPublicKey(targetPubB64); // RSA-OAEP public
-        const privKey = await loadPrivateKey(privateKeyB64); // PKCS8 private
+        const targetPubKey = await loadPublicKeyOAEP(targetPubB64); // encrypt
+        const privKey = await loadPrivateKeyOAEP(privateKeyB64); // sign
 
         const ciphertext = await rsaEncrypt(targetPubKey, messageText);
 
@@ -367,7 +399,7 @@ export function SocpProvider({ children }) {
 
         const ts = currentTimestamp();
 
-        const privKey = await loadPrivateKey(privateKeyB64);
+        const privKey = await loadPrivateKeyOAEP(privateKeyB64);
         const contentSig = await computePublicContentSig(
           privKey,
           ciphertext,
@@ -427,9 +459,9 @@ export function SocpProvider({ children }) {
           });
         });
         break;
-      case MESSAGE_TYPES.COMMAND_RESPONSE:
-        onCommandResponse(msg);
-        break;
+      // case MESSAGE_TYPES.COMMAND_RESPONSE:
+      //   onCommandResponse(msg);
+      //   break;
       case MESSAGE_TYPES.USER_ADVERTISE:
         onUserAdvertise(msg);
         break;

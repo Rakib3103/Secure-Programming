@@ -1,190 +1,287 @@
-const subtle = window.crypto.subtle;
+/* eslint-disable no-unused-vars */
+import forge from 'node-forge';
 
-// === Base64URL helpers ===
-export function base64urlEncode(buf) {
-  let str = btoa(String.fromCharCode(...new Uint8Array(buf)));
-  return str.replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+/* ---------------- Base64URL helpers ---------------- */
+function b64ToB64u(b64) {
+  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+function b64uToB64(b64u) {
+  const pad = b64u.length % 4 ? '='.repeat(4 - (b64u.length % 4)) : '';
+  return b64u.replace(/-/g, '+').replace(/_/g, '/') + pad;
+}
+function b64uEncode(bytes) {
+  const s = typeof bytes === 'string' ? bytes : String.fromCharCode(...bytes);
+  return b64ToB64u(btoa(s));
 }
 
-export function base64urlDecode(b64url) {
-  let pad = b64url.length % 4;
-  if (pad) b64url += "=".repeat(4 - pad);
-  const b64 = b64url.replaceAll("-", "+").replaceAll("_", "/");
-  return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+function decode64Flexible(s) {
+  const looksUrl = s.includes('-') || s.includes('_');
+  const b64 = looksUrl
+    ? s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)
+    : s;
+  return forge.util.decode64(b64);
 }
 
-// === RSA ===
+function b64uDecode(b64u) {
+  const bin = atob(b64uToB64(b64u));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+function utf8ToBytes(s) {
+  return new TextEncoder().encode(s);
+}
+function bytesToUtf8(u8) {
+  return new TextDecoder().decode(u8);
+}
+
+/* ---------------- PEM <-> base64url helpers ---------------- */
+function pemB64uToPemText(pemB64u) {
+  return bytesToUtf8(b64uDecode(pemB64u));
+}
+function pemTextToPemB64u(pemText) {
+  return b64uEncode(utf8ToBytes(pemText));
+}
+
+/* ---------------- RSA key generation (PEM base64url like Python) ---------------- */
 export async function generateRsaKeypair() {
-  const keyPair = await subtle.generateKey(
-    {
-      name: "RSA-OAEP",
-      modulusLength: 4096,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: "SHA-256"
-    },
-    true,
-    ["encrypt", "decrypt"]
+  // forge generate is sync
+  const kp = forge.pki.rsa.generateKeyPair({ bits: 4096, e: 0x10001 });
+  const privPem = forge.pki.privateKeyToPem(kp.privateKey); // PKCS#1 by default
+  // Convert to PKCS8 to mirror Python's serialization.PrivateFormat.PKCS8
+  const pkcs8 = forge.pki.privateKeyInfoToPem(
+    forge.pki.wrapRsaPrivateKey(forge.pki.privateKeyToAsn1(kp.privateKey)),
   );
+  const pubPem = forge.pki.publicKeyToPem(kp.publicKey); // SPKI
 
-  const spki = await subtle.exportKey("spki", keyPair.publicKey);
-  const pkcs8 = await subtle.exportKey("pkcs8", keyPair.privateKey);
   return {
-    private_key_b64: base64urlEncode(pkcs8),
-    public_key_b64: base64urlEncode(spki)
+    private_key_b64: pemTextToPemB64u(pkcs8),
+    public_key_b64: pemTextToPemB64u(pubPem),
   };
 }
 
-export async function loadPrivateKey(private_b64) {
-  const buf = base64urlDecode(private_b64);
-  return await subtle.importKey(
-    "pkcs8",
-    buf,
-    { name: "RSA-OAEP", hash: "SHA-256" },
-    true,
-    ["decrypt"]
-  );
-}
-
-export async function loadPublicKey(public_b64) {
-  const buf = base64urlDecode(public_b64);
-  return await subtle.importKey(
-    "spki",
-    buf,
-    { name: "RSA-OAEP", hash: "SHA-256" },
-    true,
-    ["encrypt"]
-  );
-}
-
-export async function rsaEncrypt(publicKey, plaintext) {
-  const enc = typeof plaintext === "string" ? new TextEncoder().encode(plaintext) : plaintext;
-  const ciphertext = await subtle.encrypt(
-    { name: "RSA-OAEP" },
-    publicKey,
-    enc
-  );
-  return base64urlEncode(ciphertext);
-}
-
-export async function rsaDecrypt(privateKey, ciphertext_b64) {
-  const buf = base64urlDecode(ciphertext_b64);
-  const plaintext = await subtle.decrypt({ name: "RSA-OAEP" }, privateKey, buf);
-  return new Uint8Array(plaintext);
-}
-
-// === RSA-PSS for signing/verification ===
 export async function generateRsaSignKeypair() {
-  const keyPair = await subtle.generateKey(
-    {
-      name: "RSASSA-PSS",
-      modulusLength: 4096,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: "SHA-256"
-    },
-    true,
-    ["sign", "verify"]
+  const kp = forge.pki.rsa.generateKeyPair({ bits: 4096, e: 0x10001 });
+  const pkcs8 = forge.pki.privateKeyInfoToPem(
+    forge.pki.wrapRsaPrivateKey(forge.pki.privateKeyToAsn1(kp.privateKey)),
   );
-  const spki = await subtle.exportKey("spki", keyPair.publicKey);
-  const pkcs8 = await subtle.exportKey("pkcs8", keyPair.privateKey);
+  const pubPem = forge.pki.publicKeyToPem(kp.publicKey);
   return {
-    private_key_b64: base64urlEncode(pkcs8),
-    public_key_b64: base64urlEncode(spki)
+    private_key_b64: pemTextToPemB64u(pkcs8),
+    public_key_b64: pemTextToPemB64u(pubPem),
   };
 }
 
-export async function rsaSign(privateKey, data) {
-  const enc = new TextEncoder().encode(data);
-  const signature = await subtle.sign(
-    { name: "RSASSA-PSS", saltLength: 32 },
-    privateKey,
-    enc
+/* ---------------- Load keys from PEM base64url ---------------- */
+export function loadPrivateKey(privPemB64u) {
+  console.log({ privPemB64u });
+  const pem = pemB64uToPemText(privPemB64u);
+  // Accept PKCS8 or PKCS1
+  try {
+    return forge.pki.privateKeyFromPem(pem);
+  } catch {
+    // In case it's PKCS8 -> convert to privateKey
+    const obj = forge.pki.privateKeyInfoFromPem(pem);
+    return forge.pki.privateKeyFromAsn1(forge.asn1.fromDer(obj.privateKey));
+  }
+}
+
+function calcPssMaxSaltLenForge(
+  pubKey /* forge.pki.rsa.PublicKey */,
+  sha = 'sha256',
+) {
+  const hLen =
+    sha.toLowerCase() === 'sha256'
+      ? 32
+      : sha.toLowerCase() === 'sha1'
+        ? 20
+        : sha.toLowerCase() === 'sha384'
+          ? 48
+          : sha.toLowerCase() === 'sha512'
+            ? 64
+            : (() => {
+                throw new Error('Unsupported hash');
+              })();
+
+  const modBits = pubKey.n.bitLength(); // forge BigInteger
+  const emLen = Math.ceil((modBits - 1) / 8);
+  return emLen - hLen - 2; // PSS.MAX_LENGTH
+}
+
+export function loadPublicKey(pubPemB64u) {
+  const pem = pemB64uToPemText(pubPemB64u);
+  return forge.pki.publicKeyFromPem(pem);
+}
+
+/* ---------------- RSA-OAEP (SHA-256) ---------------- */
+// export function rsaEncrypt(publicKey, plaintext) {
+//   const bytes = typeof plaintext === 'string' ? forge.util.encodeUtf8(plaintext) : String.fromCharCode(...plaintext);
+//   const ct = publicKey.encrypt(bytes, 'RSA-OAEP', {
+//     md: forge.md.sha256.create(),
+//     mgf1: forge.mgf.mgf1.create(forge.md.sha256.create()),
+//   });
+//   return b64ToB64u(forge.util.encode64(ct));
+// }
+// export function rsaDecrypt(privateKey, ciphertextB64u) {
+//   const ctBytes = forge.util.decode64(b64uToB64(ciphertextB64u));
+//   const pt = privateKey.decrypt(ctBytes, 'RSA-OAEP', {
+//     md: forge.md.sha256.create(),
+//     mgf1: forge.mgf.mgf1.create(forge.md.sha256.create()),
+//   });
+//   // return Uint8Array like previous API
+//   const bin = forge.util.binary.raw.decode(pt);
+//   const out = new Uint8Array(bin.length);
+//   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+//   return out;
+// }
+
+export function rsaEncrypt(publicKey, plaintext, opts = { hash: 'sha256' }) {
+  const bytes =
+    typeof plaintext === 'string'
+      ? forge.util.encodeUtf8(plaintext)
+      : String.fromCharCode(...plaintext);
+
+  const useSha256 = (opts.hash || 'sha256').toLowerCase() === 'sha256';
+  const md = useSha256 ? forge.md.sha256.create() : forge.md.sha1.create();
+  const mgf = forge.mgf.mgf1.create(
+    useSha256 ? forge.md.sha256.create() : forge.md.sha1.create(),
   );
-  return base64urlEncode(signature);
+
+  const ct = publicKey.encrypt(bytes, 'RSA-OAEP', { md, mgf1: mgf });
+  return b64ToB64u(forge.util.encode64(ct));
 }
 
-export async function rsaVerify(publicKey, data, sig_b64) {
-  const enc = new TextEncoder().encode(data);
-  const sig = base64urlDecode(sig_b64);
-  return await subtle.verify(
-    { name: "RSASSA-PSS", saltLength: 32 },
-    publicKey,
-    sig,
-    enc
+export function rsaDecrypt(privateKey, ciphertextB64Any) {
+  // ciphertextB64Any: base64 hoặc base64url -> binary string
+  const ct = decode64Flexible(ciphertextB64Any);
+
+  const tryDec = md =>
+    privateKey.decrypt(ct, 'RSA-OAEP', {
+      md,
+      mgf1: forge.mgf.mgf1.create(md),
+    });
+
+  const attempts = [forge.md.sha256.create(), forge.md.sha1.create()];
+  let lastErr;
+
+  for (const md of attempts) {
+    try {
+      const pt = tryDec(md); // <- plaintext là BINARY STRING
+      const out = new Uint8Array(pt.length);
+      for (let i = 0; i < pt.length; i++) out[i] = pt.charCodeAt(i);
+      return out; // trả bytes
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw new Error(
+    `RSA-OAEP decrypt failed (SHA-256, SHA-1): ${lastErr?.message || 'unknown'}`,
   );
 }
+/* ---------------- RSA-PSS (SHA-256, saltLength=32) ---------------- */
+export function rsaSignPss(privateKey, data) {
+  const md = forge.md.sha256.create();
+  if (typeof data === 'string') md.update(data, 'utf8');
+  else md.update(String.fromCharCode(...data), 'raw');
 
-// === Payload canonicalization ===
-export function canonicalizePayload(payload) {
-  return JSON.stringify(payload, Object.keys(payload).sort());
+  const pss = forge.pss.create({
+    md: forge.md.sha256.create(),
+    mgf: forge.mgf.mgf1.create(forge.md.sha256.create()),
+    saltLength: 32,
+  });
+  const sigBytes = privateKey.sign(md, pss);
+  return b64ToB64u(forge.util.encode64(sigBytes));
+}
+export function rsaVerifyPss(publicKey, data, sigB64u) {
+  const md = forge.md.sha256.create();
+  if (typeof data === 'string') md.update(data, 'utf8');
+  else md.update(String.fromCharCode(...data), 'raw');
+
+  // const pss = forge.pss.create({
+  //   md: forge.md.sha256.create(),
+  //   mgf: forge.mgf.mgf1.create(forge.md.sha256.create()),
+  //   saltLength: 32,
+  // });
+  const pss = forge.pss.create({
+    md: forge.md.sha256.create(),
+    mgf: forge.mgf.mgf1.create(forge.md.sha256.create()),
+    // saltLength: calcPssMaxSaltLenForge(publicKey), // <-- MAX_LENGTH tương ứng
+    saltLength: 32, // <-- MAX_LENGTH tương ứng
+  });
+  const sigBytes = forge.util.decode64(b64uToB64(sigB64u));
+  return publicKey.verify(md.digest().bytes(), sigBytes, pss);
 }
 
-// === Combined signature helpers ===
-export async function computeContentSig(privKey, ciphertext, fromId, to, ts) {
-  const data = `${ciphertext}${fromId}${to}${ts}`;
-  return await rsaSign(privKey, data);
+/* ---------------- Content sig helpers (like Python) ---------------- */
+export function computeContentSig(privKey, ciphertextB64u, fromId, toId, ts) {
+  const msg = `${ciphertextB64u}${fromId}${toId}${ts}`;
+  return rsaSignPss(privKey, msg);
+}
+export function verifyContentSig(
+  pubKey,
+  ciphertextB64u,
+  fromId,
+  toId,
+  ts,
+  sigB64u,
+) {
+  const msg = `${ciphertextB64u}${fromId}${toId}${ts}`;
+  return rsaVerifyPss(pubKey, msg, sigB64u);
+}
+export function computePublicContentSig(privKey, ciphertextB64u, fromId, ts) {
+  const msg = `${ciphertextB64u}${fromId}${ts}`;
+  return rsaSignPss(privKey, msg);
+}
+export function verifyPublicContentSig(
+  pubKey,
+  ciphertextB64u,
+  fromId,
+  ts,
+  sigB64u,
+) {
+  const msg = `${ciphertextB64u}${fromId}${ts}`;
+  return rsaVerifyPss(pubKey, msg, sigB64u);
 }
 
-export async function verifyContentSig(pubKey, ciphertext, fromId, to, ts, sig_b64) {
-  const data = `${ciphertext}${fromId}${to}${ts}`;
-  return await rsaVerify(pubKey, data, sig_b64);
+/* ---------------- AES-GCM (iv(12) | tag(16) | ciphertext) ---------------- */
+export function generateAesKey() {
+  const bytes = forge.random.getBytesSync(32);
+  const out = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) out[i] = bytes.charCodeAt(i);
+  return out;
+}
+export function aesEncrypt(rawKey, plaintext) {
+  const keyBytes = String.fromCharCode(...rawKey);
+  const iv = forge.random.getBytesSync(12); // 96-bit nonce (recommended)
+  const cipher = forge.cipher.createCipher('AES-GCM', keyBytes);
+  const dataBytes =
+    typeof plaintext === 'string'
+      ? forge.util.encodeUtf8(plaintext)
+      : String.fromCharCode(...plaintext);
+  cipher.start({ iv, tagLength: 128 });
+  cipher.update(forge.util.createBuffer(dataBytes));
+  cipher.finish();
+  const tag = cipher.mode.tag.getBytes(); // 16 bytes
+  const body = cipher.output.getBytes();
+  const combined = iv + tag + body;
+  return b64ToB64u(forge.util.encode64(combined));
+}
+export function aesDecrypt(rawKey, ciphertextB64u) {
+  const keyBytes = String.fromCharCode(...rawKey);
+  const combined = forge.util.decode64(b64uToB64(ciphertextB64u));
+  const iv = combined.substring(0, 12);
+  const tag = combined.substring(12, 28);
+  const body = combined.substring(28);
+  const decipher = forge.cipher.createDecipher('AES-GCM', keyBytes);
+  decipher.start({ iv, tagLength: 128, tag });
+  decipher.update(forge.util.createBuffer(body));
+  const ok = decipher.finish();
+  if (!ok) throw new Error('AES-GCM auth failed');
+  const pt = decipher.output.getBytes();
+  return forge.util.decodeUtf8(pt);
 }
 
-export async function computePublicContentSig(privKey, ciphertext, fromId, ts) {
-  const data = `${ciphertext}${fromId}${ts}`;
-  return await rsaSign(privKey, data);
-}
-
-export async function verifyPublicContentSig(pubKey, ciphertext, fromId, ts, sig_b64) {
-  const data = `${ciphertext}${fromId}${ts}`;
-  return await rsaVerify(pubKey, data, sig_b64);
-}
-
-export async function computeTransportSig(privKey, payload) {
-  const canonical = canonicalizePayload(payload);
-  return await rsaSign(privKey, canonical);
-}
-
-export async function verifyTransportSig(pubKey, payload, sig_b64) {
-  const canonical = canonicalizePayload(payload);
-  return await rsaVerify(pubKey, canonical, sig_b64);
-}
-
-// === AES ===
-export async function generateAesKey() {
-  const key = await subtle.generateKey(
-    { name: "AES-GCM", length: 256 },
-    true,
-    ["encrypt", "decrypt"]
-  );
-  const raw = await subtle.exportKey("raw", key);
-  return new Uint8Array(raw);
-}
-
-export async function aesEncrypt(rawKey, plaintext) {
-  const iv = crypto.getRandomValues(new Uint8Array(16));
-  const key = await subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt"]);
-  const enc = typeof plaintext === "string" ? new TextEncoder().encode(plaintext) : plaintext;
-  const cipherbuf = await subtle.encrypt({ name: "AES-GCM", iv }, key, enc);
-  const tagStart = cipherbuf.byteLength - 16;
-  const tag = new Uint8Array(cipherbuf.slice(tagStart));
-  const combined = new Uint8Array([...iv, ...tag, ...new Uint8Array(cipherbuf.slice(0, tagStart))]);
-  return base64urlEncode(combined);
-}
-
-export async function aesDecrypt(rawKey, ciphertext_b64) {
-  const combined = base64urlDecode(ciphertext_b64);
-  const iv = combined.slice(0, 16);
-  const tag = combined.slice(16, 32);
-  const ciphertext = combined.slice(32);
-  const key = await subtle.importKey("raw", rawKey, "AES-GCM", false, ["decrypt"]);
-  const cipherbuf = new Uint8Array([...ciphertext, ...tag]); // reconstruct GCM structure
-  const plaintext = await subtle.decrypt({ name: "AES-GCM", iv, tagLength: 128 }, key, cipherbuf);
-  return new TextDecoder().decode(plaintext);
-}
-
-// === Key share signature ===
-export async function computeKeyShareSig(privKey, shares, creator_pub) {
-  const canonical = JSON.stringify(shares.sort());
-  const data = canonical + creator_pub;
-  return await rsaSign(privKey, data);
+/* ---------------- Misc ---------------- */
+export function currentTimestamp() {
+  return Date.now();
 }
