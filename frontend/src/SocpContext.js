@@ -88,7 +88,6 @@ export function SocpProvider({ children }) {
       if (!publicKeyB64 || !userId) return;
 
       const payload = {
-        //TODO: check correct value
         client: 'local-cli-v1',
         pubkey: publicKeyB64,
         enc_pubkey: publicKeyB64,
@@ -210,36 +209,6 @@ export function SocpProvider({ children }) {
     [privateKeyB64, groupKeys],
   );
 
-  // const onCommandResponse = useCallback(msg => {
-  //   try {
-  //     const payload = msg.payload;
-  //     const command = payload.command;
-  //     const response = JSON.parse(payload.response || '{}');
-  //     console.log({ response });
-
-  //     switch (command) {
-  //       case '/list': {
-  //         const usersArr = Array.isArray(response.users) ? response.users : [];
-  //         setKnownPubkeys(prev => {
-  //           const next = { ...prev };
-  //           usersArr.forEach(u => {
-  //             if (u.user_id && u.pubkey) next[u.user_id] = u.pubkey;
-  //           });
-  //           return next;
-  //         });
-  //         setOnlineUsers(usersArr.map(u => ({ userId: u.user_id, meta: {} })));
-  //         break;
-  //       }
-
-  //       default:
-  //         console.error('[SOCP] Unknown command response:', command, payload);
-  //         break;
-  //     }
-  //   } catch (err) {
-  //     console.error('[SOCP] Failed to handle COMMAND_RESPONSE:', err);
-  //   }
-  // }, []);
-
   const onUserAdvertise = useCallback(
     msg => {
       try {
@@ -302,8 +271,6 @@ export function SocpProvider({ children }) {
     try {
       const { user_id: uid } = msg.payload || {};
       if (!uid) return;
-
-      // Nếu không có trong knownPubkeys thì thôi (giống Python: early return)
       let hadKey = false;
       setKnownPubkeys(prev => {
         if (!(uid in prev)) return prev;
@@ -320,10 +287,6 @@ export function SocpProvider({ children }) {
 
       setActivePeerId(curr => (curr === uid ? null : curr));
 
-      // setMessages(prev => {
-      //   const { [uid]: _msgs, ...rest } = prev;
-      //   return rest;
-      // });
     } catch (err) {
       console.error('[SOCP] Bad USER_REMOVE payload:', err);
     }
@@ -427,10 +390,8 @@ export function SocpProvider({ children }) {
           ts,
         );
 
-        // 6) Gửi lên server
         sendJsonMessage(body);
 
-        // 7) Cập nhật UI lạc quan vào thread "public"
         setMessages(prev => {
           const arr = prev.public ? [...prev.public] : [];
           arr.push({ dir: 'out', text: messageText.trim(), ts });
@@ -554,7 +515,6 @@ export function SocpProvider({ children }) {
           createBody(MESSAGE_TYPES.FILE_END, userId, to, endPayload, '', ts),
         );
 
-        // 4) Chỉ khi gửi xong mới hiển thị tin ở UI (outgoing)
         const url = URL.createObjectURL(
           new Blob([u8], { type: 'application/octet-stream' }),
         );
@@ -605,9 +565,6 @@ export function SocpProvider({ children }) {
           });
         });
         break;
-      // case MESSAGE_TYPES.COMMAND_RESPONSE:
-      //   onCommandResponse(msg);
-      //   break;
       case MESSAGE_TYPES.USER_ADVERTISE:
         onUserAdvertise(msg);
         break;
@@ -674,11 +631,9 @@ export function SocpProvider({ children }) {
         try {
           let bytes;
           if (ft.mode === 'public') {
-            // ⚠️ yêu cầu aesDecrypt trả về Uint8Array (bytes). Nếu hiện tại trả string → cần sửa crypto aesDecryptBytes.
             bytes = await aesDecrypt(groupKeys['public'], ciphertext);
           } else {
             const privKey = await loadPrivateKeyOAEP(privateKeyB64);
-            // rsaDecrypt nên trả về Uint8Array (bytes)
             bytes = await rsaDecrypt(privKey, ciphertext);
           }
 

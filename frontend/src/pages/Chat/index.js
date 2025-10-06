@@ -83,8 +83,8 @@ export default function ChatPage() {
 
               return (
                 <Conversation
-                  key={uid} // key duy nhất theo userId
-                  name={uid} // hiển thị userId
+                  key={uid}
+                  name={uid}
                   onClick={() => setActivePeerId(uid)}
                   active={isActive}
                 >
