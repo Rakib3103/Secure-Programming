@@ -358,7 +358,7 @@ class Server(BaseServer):
     async def _handle_user_hello(self, websocket: ServerConnection, msg: ProtocolMessage):
         payload = UserHelloPayload(**msg.payload)
         user_id = msg.from_
-        if user_id in self.local_users:
+        if user_id in self.user_locations:
             await self._error_to(ws=websocket, code=ErrorCode.NAME_IN_USE, detail="User ID already in use")
             return
 
