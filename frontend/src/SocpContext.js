@@ -20,6 +20,7 @@ import {
   computeContentSig,
   aesEncrypt,
   computePublicContentSig,
+  utf8ToBytes,
 } from './crypto';
 import { sha256 } from 'js-sha256';
 
@@ -620,7 +621,6 @@ export function SocpProvider({ children }) {
       const { file_id, index, ciphertext, content_sig } = msg.payload || {};
       if (!file_id || typeof index !== 'number' || !ciphertext) return;
 
-      // Dùng IIFE để await bên trong (vì setState callback không await được)
       (async () => {
         const ft = fileTransfers[file_id];
         if (!ft) {
@@ -631,7 +631,8 @@ export function SocpProvider({ children }) {
         try {
           let bytes;
           if (ft.mode === 'public') {
-            bytes = await aesDecrypt(groupKeys['public'], ciphertext);
+            const plain = await aesDecrypt(groupKeys['public'], ciphertext);
+            bytes = utf8ToBytes(plain);
           } else {
             const privKey = await loadPrivateKeyOAEP(privateKeyB64);
             bytes = await rsaDecrypt(privKey, ciphertext);

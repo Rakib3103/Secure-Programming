@@ -28,7 +28,7 @@ function b64uDecode(b64u) {
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
-function utf8ToBytes(s) {
+export function utf8ToBytes(s) {
   return new TextEncoder().encode(s);
 }
 function bytesToUtf8(u8) {
@@ -45,7 +45,10 @@ function pemTextToPemB64u(pemText) {
 
 /* ---------------- RSA key generation (PEM base64url like Python) ---------------- */
 function derToPem(derBuf, label) {
-  const u8 = derBuf instanceof ArrayBuffer ? new Uint8Array(derBuf) : new Uint8Array(derBuf.buffer || derBuf);
+  const u8 =
+    derBuf instanceof ArrayBuffer
+      ? new Uint8Array(derBuf)
+      : new Uint8Array(derBuf.buffer || derBuf);
   const b64 = btoa(String.fromCharCode(...u8));
   const lines = b64.match(/.{1,64}/g)?.join('\n') ?? b64;
   return `-----BEGIN ${label}-----\n${lines}\n-----END ${label}-----\n`;
@@ -53,33 +56,40 @@ function derToPem(derBuf, label) {
 
 // UTF-8 string -> base64url
 function utf8ToB64u(str) {
-  const bytes = new TextEncoder().encode(str);              // UTF-8 -> Uint8Array
-  const b64  = btoa(String.fromCharCode(...bytes));         // -> base64
+  const bytes = new TextEncoder().encode(str); // UTF-8 -> Uint8Array
+  const b64 = btoa(String.fromCharCode(...bytes)); // -> base64
   return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, ''); // -> base64url
 }
 export async function generateRsaKeypair() {
-    if (window.crypto?.subtle) {
+  if (window.crypto?.subtle) {
     const kp = await crypto.subtle.generateKey(
-      { name:'RSA-OAEP', modulusLength:4096, publicExponent:new Uint8Array([1,0,1]), hash:'SHA-256' },
+      {
+        name: 'RSA-OAEP',
+        modulusLength: 4096,
+        publicExponent: new Uint8Array([1, 0, 1]),
+        hash: 'SHA-256',
+      },
       true,
-      ['encrypt','decrypt']
+      ['encrypt', 'decrypt'],
     );
-    const spki  = await crypto.subtle.exportKey('spki',  kp.publicKey);
+    const spki = await crypto.subtle.exportKey('spki', kp.publicKey);
     const pkcs8 = await crypto.subtle.exportKey('pkcs8', kp.privateKey);
-    const pubPem  = derToPem(spki,  'PUBLIC KEY');
+    const pubPem = derToPem(spki, 'PUBLIC KEY');
     const privPem = derToPem(pkcs8, 'PRIVATE KEY');
     return {
-      public_key_b64:  utf8ToB64u(pubPem),
+      public_key_b64: utf8ToB64u(pubPem),
       private_key_b64: utf8ToB64u(privPem),
     };
   }
   const kp = forge.pki.rsa.generateKeyPair({ bits: 4096, e: 0x10001 });
   const pkcs8 = forge.pki.privateKeyInfoToPem(
-    forge.pki.wrapRsaPrivateKey(forge.pki.privateKeyToAsn1(kp.privateKey))
+    forge.pki.wrapRsaPrivateKey(forge.pki.privateKeyToAsn1(kp.privateKey)),
   );
   const pubPem = forge.pki.publicKeyToPem(kp.publicKey);
-  return { public_key_b64: utf8ToB64u(pubPem), private_key_b64: utf8ToB64u(pkcs8) };
-
+  return {
+    public_key_b64: utf8ToB64u(pubPem),
+    private_key_b64: utf8ToB64u(pkcs8),
+  };
 }
 
 export async function generateRsaSignKeypair() {
