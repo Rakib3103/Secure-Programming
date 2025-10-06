@@ -9,7 +9,6 @@ import {
   MessageInput,
   MessageList,
   MessageSeparator,
-  Search,
   Sidebar,
 } from '@chatscope/chat-ui-kit-react';
 import { useSocpContext } from '../../SocpContext';
