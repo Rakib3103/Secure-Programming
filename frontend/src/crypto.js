@@ -73,7 +73,6 @@ export async function generateRsaKeypair() {
       private_key_b64: utf8ToB64u(privPem),
     };
   }
-  // Fallback forge nếu không có WebCrypto
   const kp = forge.pki.rsa.generateKeyPair({ bits: 4096, e: 0x10001 });
   const pkcs8 = forge.pki.privateKeyInfoToPem(
     forge.pki.wrapRsaPrivateKey(forge.pki.privateKeyToAsn1(kp.privateKey))
@@ -137,26 +136,6 @@ export function loadPublicKey(pubPemB64u) {
 }
 
 /* ---------------- RSA-OAEP (SHA-256) ---------------- */
-// export function rsaEncrypt(publicKey, plaintext) {
-//   const bytes = typeof plaintext === 'string' ? forge.util.encodeUtf8(plaintext) : String.fromCharCode(...plaintext);
-//   const ct = publicKey.encrypt(bytes, 'RSA-OAEP', {
-//     md: forge.md.sha256.create(),
-//     mgf1: forge.mgf.mgf1.create(forge.md.sha256.create()),
-//   });
-//   return b64ToB64u(forge.util.encode64(ct));
-// }
-// export function rsaDecrypt(privateKey, ciphertextB64u) {
-//   const ctBytes = forge.util.decode64(b64uToB64(ciphertextB64u));
-//   const pt = privateKey.decrypt(ctBytes, 'RSA-OAEP', {
-//     md: forge.md.sha256.create(),
-//     mgf1: forge.mgf.mgf1.create(forge.md.sha256.create()),
-//   });
-//   // return Uint8Array like previous API
-//   const bin = forge.util.binary.raw.decode(pt);
-//   const out = new Uint8Array(bin.length);
-//   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-//   return out;
-// }
 
 export function rsaEncrypt(publicKey, plaintext, opts = { hash: 'sha256' }) {
   const bytes =
@@ -175,7 +154,7 @@ export function rsaEncrypt(publicKey, plaintext, opts = { hash: 'sha256' }) {
 }
 
 export function rsaDecrypt(privateKey, ciphertextB64Any) {
-  // ciphertextB64Any: base64 hoặc base64url -> binary string
+  // ciphertextB64Any: base64 or base64url -> binary string
   const ct = decode64Flexible(ciphertextB64Any);
 
   const tryDec = md =>
@@ -189,10 +168,10 @@ export function rsaDecrypt(privateKey, ciphertextB64Any) {
 
   for (const md of attempts) {
     try {
-      const pt = tryDec(md); // <- plaintext là BINARY STRING
+      const pt = tryDec(md); // <- plaintext is BINARY STRING
       const out = new Uint8Array(pt.length);
       for (let i = 0; i < pt.length; i++) out[i] = pt.charCodeAt(i);
-      return out; // trả bytes
+      return out;
     } catch (e) {
       lastErr = e;
     }
@@ -220,15 +199,9 @@ export function rsaVerifyPss(publicKey, data, sigB64u) {
   if (typeof data === 'string') md.update(data, 'utf8');
   else md.update(String.fromCharCode(...data), 'raw');
 
-  // const pss = forge.pss.create({
-  //   md: forge.md.sha256.create(),
-  //   mgf: forge.mgf.mgf1.create(forge.md.sha256.create()),
-  //   saltLength: 32,
-  // });
   const pss = forge.pss.create({
     md: forge.md.sha256.create(),
     mgf: forge.mgf.mgf1.create(forge.md.sha256.create()),
-    // saltLength: calcPssMaxSaltLenForge(publicKey), // <-- MAX_LENGTH tương ứng
     saltLength: 32,
   });
   const sigBytes = forge.util.decode64(b64uToB64(sigB64u));

@@ -9,7 +9,6 @@ import {
   MessageInput,
   MessageList,
   MessageSeparator,
-  Search,
   Sidebar,
 } from '@chatscope/chat-ui-kit-react';
 import { useSocpContext } from '../../SocpContext';
@@ -60,7 +59,6 @@ export default function ChatPage() {
     >
       <MainContainer responsive>
         <Sidebar position="left">
-          <Search placeholder="Search..." />
           <ConversationList>
             <Conversation
               key={GROUP_ID}
@@ -83,8 +81,8 @@ export default function ChatPage() {
 
               return (
                 <Conversation
-                  key={uid} // key duy nhất theo userId
-                  name={uid} // hiển thị userId
+                  key={uid}
+                  name={uid}
                   onClick={() => setActivePeerId(uid)}
                   active={isActive}
                 >
@@ -264,7 +262,7 @@ export default function ChatPage() {
         className="text-center py-1"
         style={{ fontSize: 12, color: '#64748b' }}
       >
-        SOCP WS: {wsState}
+        SOCP WS: {wsState} | User: <b>{userId}</b>
       </div>
     </div>
   );
