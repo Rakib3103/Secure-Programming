@@ -60,7 +60,6 @@ export default function ChatPage() {
     >
       <MainContainer responsive>
         <Sidebar position="left">
-          <Search placeholder="Search..." />
           <ConversationList>
             <Conversation
               key={GROUP_ID}
@@ -264,7 +263,7 @@ export default function ChatPage() {
         className="text-center py-1"
         style={{ fontSize: 12, color: '#64748b' }}
       >
-        SOCP WS: {wsState}
+        SOCP WS: {wsState} | User: <b>{userId}</b>
       </div>
     </div>
   );

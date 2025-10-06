@@ -1,6 +1,5 @@
 import { Route, BrowserRouter as Router, Routes } from 'react-router-dom';
 import Chat from './pages/Chat';
-import Login from './pages/Login';
 import { SocpProvider } from './SocpContext';
 
 import 'bootstrap/dist/css/bootstrap.min.css';
@@ -13,7 +12,6 @@ function App() {
       <Router>
         <Routes>
           <Route path="/" element={<Chat />} />
-          <Route path="/login" element={<Login />} />
           <Route path="*" element={<div>Not found</div>} />
         </Routes>
       </Router>
