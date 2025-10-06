@@ -21,6 +21,7 @@ import {
   aesEncrypt,
   computePublicContentSig,
 } from './crypto';
+import { sha256 } from 'js-sha256';
 
 const currentTimestamp = () => Math.floor(Date.now() / 1000);
 
@@ -64,14 +65,14 @@ export function SocpProvider({ children }) {
   const [publicKeyB64, setPublicKeyB64] = useState(null);
   const [knownPubkeys, setKnownPubkeys] = useState({});
   const [groupKeys, setGroupKeys] = useState({});
+  const [fileTransfers, setFileTransfers] = useState({});
   // onlineUsers: [{ userId, meta }]
   const [onlineUsers, setOnlineUsers] = useState([]);
   // messages: { [peerId]: [{dir: "in"|"out", text: string, ts: number}] }
   const [messages, setMessages] = useState({});
   const [activePeerId, setActivePeerId] = useState(null);
-  
-  console.log({ onlineUsers});
-  
+
+  console.log({ messages });
 
   useEffect(() => {
     const generatedUserId = crypto.randomUUID();
@@ -139,70 +140,75 @@ export function SocpProvider({ children }) {
     sendUserHello,
   ]);
 
-  const onUserDeliver = useCallback(async msg => {
-    try {
-      const payload = msg.payload;
-      const ciphertext = payload.ciphertext;
-      const senderId = payload.sender;
-      const senderPubB64 = payload.sender_pub;
-      const contentSig = payload.content_sig;
-      const to = msg.to;
-      const ts = msg.ts;
-
-      const privKey = await loadPrivateKeyOAEP(privateKeyB64);
-      const senderPub = await loadPublicKeyOAEP(senderPubB64);
-
-      // 1️⃣ Try decrypt as Direct Message (RSA)
+  const onUserDeliver = useCallback(
+    async msg => {
       try {
-        const plaintext = await rsaDecrypt(privKey, ciphertext);
-        const verified = await verifyContentSig(
-          senderPub,
-          ciphertext,
-          senderId,
-          to,
-          ts,
-          contentSig,
-        );
-        if (verified) {
-          const text = new TextDecoder().decode(plaintext);
-          console.info(`[DM] ${senderId}: ${text}`);
-          return { type: 'dm', senderId, text };
-        }
-      } catch (err) {
-        console.error('[SOCP] Failed to decrypt direct message:', err);
-      }
+        const payload = msg.payload;
+        const ciphertext = payload.ciphertext;
+        const senderId = payload.sender;
+        const senderPubB64 = payload.sender_pub;
+        const contentSig = payload.content_sig;
+        const to = msg.to;
+        const ts = msg.ts;
 
-      // 2️⃣ Try decrypt as Public Message (AES)
-      if (!groupKeys['public']) {
-        console.error("[SOCP] No group key for 'public', message discarded");
+        const privKey = await loadPrivateKeyOAEP(privateKeyB64);
+        const senderPub = await loadPublicKeyOAEP(senderPubB64);
+
+        // 1️⃣ Try decrypt as Direct Message (RSA)
+        try {
+          const plaintext = await rsaDecrypt(privKey, ciphertext);
+          const verified = await verifyContentSig(
+            senderPub,
+            ciphertext,
+            senderId,
+            to,
+            ts,
+            contentSig,
+          );
+          if (verified) {
+            const text = new TextDecoder().decode(plaintext);
+            console.info(`[DM] ${senderId}: ${text}`);
+            return { type: 'dm', senderId, text };
+          }
+        } catch (err) {
+          console.error('[SOCP] Failed to decrypt direct message:', err);
+        }
+
+        // 2️⃣ Try decrypt as Public Message (AES)
+        if (!groupKeys['public']) {
+          console.error("[SOCP] No group key for 'public', message discarded");
+          return null;
+        }
+
+        try {
+          const aesKey = groupKeys['public'];
+          const plaintext = await aesDecrypt(aesKey, ciphertext);
+          const verified = await verifyPublicContentSig(
+            senderPub,
+            ciphertext,
+            senderId,
+            ts,
+            contentSig,
+          );
+          if (verified) {
+            console.info(`[PUB] ${senderId}: ${plaintext}`);
+            return { type: 'public', senderId, text: plaintext };
+          }
+        } catch (err) {
+          console.error('[SOCP] Failed to decrypt public message:', err);
+        }
+
+        console.error(
+          '[SOCP] Unable to decrypt message: neither DM nor public',
+        );
+        return null;
+      } catch (err) {
+        console.error('[SOCP] message processing failed:', err);
         return null;
       }
-
-      try {
-        const aesKey = groupKeys['public'];
-        const plaintext = await aesDecrypt(aesKey, ciphertext);
-        const verified = await verifyPublicContentSig(
-          senderPub,
-          ciphertext,
-          senderId,
-          ts,
-          contentSig,
-        );
-        if (verified) {
-          console.info(`[PUB] ${senderId}: ${plaintext}`);
-          return { type: 'public', senderId, text: plaintext };
-        }
-      } catch (err) {
-        console.error('[SOCP] Failed to decrypt public message:', err);
-      }
-
-      console.error('[SOCP] Unable to decrypt message: neither DM nor public');
-      return null;
-    } catch (err) {
-      console.error('[SOCP] message processing failed:', err);
-      return null;
-    }
-  }, [privateKeyB64, groupKeys]);
+    },
+    [privateKeyB64, groupKeys],
+  );
 
   // const onCommandResponse = useCallback(msg => {
   //   try {
@@ -444,6 +450,139 @@ export function SocpProvider({ children }) {
     ],
   );
 
+  const sendFile = useCallback(
+    async (targetIdOrPublic, file, mode = 'dm') => {
+      try {
+        if (!file || !(file instanceof File)) return;
+
+        const to = mode === 'public' ? 'public' : targetIdOrPublic;
+        const ts = currentTimestamp();
+        const fileId = crypto.randomUUID();
+
+        const privKey = await loadPrivateKeyOAEP(privateKeyB64);
+        let targetPubKey = null;
+        let aesKey = null;
+
+        if (mode === 'public') {
+          aesKey = groupKeys['public'];
+        } else {
+          const targetPubB64 = knownPubkeys[targetIdOrPublic];
+          if (!targetPubB64) {
+            console.error(`[SOCP] Unknown user: ${targetIdOrPublic}`);
+            return;
+          }
+          targetPubKey = await loadPublicKeyOAEP(targetPubB64);
+        }
+
+        const fileBuf = await file.arrayBuffer();
+        const hash = sha256(new Uint8Array(fileBuf));
+
+        // 1) FILE_START
+        const startPayload = {
+          file_id: fileId,
+          name: file.name,
+          size: file.size,
+          sha256: hash,
+          mode, // 'public' | 'dm'
+        };
+        sendJsonMessage(
+          createBody(
+            MESSAGE_TYPES.FILE_START,
+            userId,
+            to,
+            startPayload,
+            '',
+            ts,
+          ),
+        );
+
+        // 2) FILE_CHUNK (base64)
+        const buf = await file.arrayBuffer();
+        const u8 = new Uint8Array(buf);
+        const chunkSize = 64 * 1024; // 64KB
+        const totalChunks = Math.ceil(u8.length / chunkSize);
+
+        for (let i = 0; i < totalChunks; i++) {
+          const part = u8.subarray(
+            i * chunkSize,
+            Math.min((i + 1) * chunkSize, u8.length),
+          );
+          let ciphertext;
+          let contentSig;
+          const tsChunk = currentTimestamp();
+
+          if (mode === 'public') {
+            ciphertext = await aesEncrypt(aesKey, part);
+            contentSig = await computePublicContentSig(
+              privKey,
+              ciphertext,
+              userId,
+              tsChunk,
+            );
+          } else {
+            ciphertext = await rsaEncrypt(targetPubKey, part);
+            contentSig = await computeContentSig(
+              privKey,
+              ciphertext,
+              userId,
+              to,
+              tsChunk,
+            );
+          }
+
+          const chunkPayload = {
+            file_id: fileId,
+            index: i,
+            ciphertext,
+            content_sig: contentSig,
+          };
+          sendJsonMessage(
+            createBody(
+              MESSAGE_TYPES.FILE_CHUNK,
+              userId,
+              to,
+              chunkPayload,
+              '',
+              tsChunk,
+            ),
+          );
+        }
+
+        // 3) FILE_END
+        const endPayload = { file_id: fileId, total_chunks: totalChunks };
+        sendJsonMessage(
+          createBody(MESSAGE_TYPES.FILE_END, userId, to, endPayload, '', ts),
+        );
+
+        // 4) Chỉ khi gửi xong mới hiển thị tin ở UI (outgoing)
+        const url = URL.createObjectURL(
+          new Blob([u8], { type: 'application/octet-stream' }),
+        );
+        const roomKey = mode === 'public' ? 'public' : targetIdOrPublic;
+        setMessages(prev => {
+          const arr = prev[roomKey] ? [...prev[roomKey]] : [];
+          arr.push({
+            dir: 'out',
+            text: `[File] ${file.name}`,
+            fileUrl: url,
+            ts,
+          });
+          return { ...prev, [roomKey]: arr };
+        });
+      } catch (err) {
+        console.error('[SOCP] sendFile failed:', err);
+      }
+    },
+    [
+      sendJsonMessage,
+      userId,
+      setMessages,
+      privateKeyB64,
+      knownPubkeys,
+      groupKeys,
+    ],
+  );
+
   useEffect(() => {
     if (!msg) return;
     const messageType = msg.type;
@@ -451,11 +590,18 @@ export function SocpProvider({ children }) {
     switch (messageType) {
       case MESSAGE_TYPES.USER_DELIVER:
         onUserDeliver(msg, privateKeyB64, groupKeys).then(result => {
-          if (!result) return;
+          if (!result || result.senderId === userId) return;
+          const roomKey = result.type === 'public' ? 'public' : result.senderId;
+
           setMessages(prev => {
-            const arr = prev[result.senderId] ? [...prev[result.senderId]] : [];
-            arr.push({ dir: 'in', text: result.text, ts: msg.ts });
-            return { ...prev, [result.senderId]: arr };
+            const arr = prev[roomKey] ? [...prev[roomKey]] : [];
+            arr.push({
+              dir: 'in',
+              text: result.text,
+              ts: msg.ts,
+              from: result.senderId,
+            });
+            return { ...prev, [roomKey]: arr };
           });
         });
         break;
@@ -471,12 +617,15 @@ export function SocpProvider({ children }) {
       case MESSAGE_TYPES.PUBLIC_CHANNEL_KEY_SHARE:
         onPublicChannelKeyShare(msg);
         break;
-      // case MESSAGE_TYPES.FILE_START:
-      //   break;
-      // case MESSAGE_TYPES.FILE_CHUNK:
-      //   break;
-      // case MESSAGE_TYPES.FILE_END:
-      //   break;
+      case MESSAGE_TYPES.FILE_START:
+        handleFileStart(msg);
+        break;
+      case MESSAGE_TYPES.FILE_CHUNK:
+        handleFileChunk(msg);
+        break;
+      case MESSAGE_TYPES.FILE_END:
+        handleFileEnd(msg);
+        break;
       case MESSAGE_TYPES.ERROR:
         console.error('[SOCP] ← ERROR', msg);
         break;
@@ -485,6 +634,146 @@ export function SocpProvider({ children }) {
         break;
     }
   }, [msg]);
+
+  const handleFileStart = useCallback(
+    msg => {
+      console.log({ from: msg.from, userId });
+
+      if (msg.from === userId) return;
+      const { file_id, name, size, mode } = msg.payload || {};
+      if (!file_id || !name) return;
+      console.info(
+        '[FILE_START] id=%s name=%s size=%s mode=%s',
+        file_id,
+        name,
+        size,
+        mode,
+      );
+      setFileTransfers(prev => ({
+        ...prev,
+        [file_id]: { name, size: size ?? 0, mode, chunks: {} },
+      }));
+    },
+    [userId],
+  );
+
+  const handleFileChunk = useCallback(
+    msg => {
+      if (msg.from === userId) return;
+      const { file_id, index, ciphertext, content_sig } = msg.payload || {};
+      if (!file_id || typeof index !== 'number' || !ciphertext) return;
+
+      // Dùng IIFE để await bên trong (vì setState callback không await được)
+      (async () => {
+        const ft = fileTransfers[file_id];
+        if (!ft) {
+          console.warn('[FILE_CHUNK] unknown file_id=', file_id);
+          return;
+        }
+
+        try {
+          let bytes;
+          if (ft.mode === 'public') {
+            // ⚠️ yêu cầu aesDecrypt trả về Uint8Array (bytes). Nếu hiện tại trả string → cần sửa crypto aesDecryptBytes.
+            bytes = await aesDecrypt(groupKeys['public'], ciphertext);
+          } else {
+            const privKey = await loadPrivateKeyOAEP(privateKeyB64);
+            // rsaDecrypt nên trả về Uint8Array (bytes)
+            bytes = await rsaDecrypt(privKey, ciphertext);
+          }
+
+          if (!(bytes instanceof Uint8Array)) {
+            console.error(
+              '[FILE_CHUNK] decrypted result is not bytes, got:',
+              typeof bytes,
+            );
+            return;
+          }
+
+          console.debug(
+            '[FILE_CHUNK] id=%s idx=%d len=%d',
+            file_id,
+            index,
+            bytes.length,
+          );
+
+          setFileTransfers(prev => {
+            const cur = prev[file_id];
+            if (!cur) return prev;
+            const chunks = { ...cur.chunks, [index]: bytes };
+            return { ...prev, [file_id]: { ...cur, chunks } };
+          });
+        } catch (e) {
+          console.error('[FILE_CHUNK] decrypt/handle failed:', e);
+        }
+      })();
+    },
+    [fileTransfers, groupKeys, privateKeyB64],
+  );
+
+  const handleFileEnd = useCallback(
+    msg => {
+      if (msg.from === userId) return;
+
+      const { file_id } = msg.payload || {};
+      if (!file_id) return;
+
+      setFileTransfers(prev => {
+        const ft = prev[file_id];
+        if (!ft) return prev;
+
+        const ordered = Object.keys(ft.chunks)
+          .sort((a, b) => Number(a) - Number(b))
+          .map(k => ft.chunks[k]);
+
+        const totalBytes = ordered.reduce((acc, u8) => acc + u8.length, 0);
+        console.info(
+          '[FILE_END] id=%s expected=%s received=%s (%s chunks)',
+          file_id,
+          ft.size,
+          totalBytes,
+          ordered.length,
+        );
+
+        const blob = new Blob(ordered, { type: 'application/octet-stream' });
+        const url = URL.createObjectURL(blob);
+
+        const roomKey = ft.mode === 'public' ? 'public' : msg.from;
+
+        setMessages(prevMsgs => {
+          const arr = prevMsgs[roomKey] ? [...prevMsgs[roomKey]] : [];
+          const text = `[File] ${ft.name}: ${url}`;
+          const incoming = {
+            dir: 'in',
+            text,
+            fileUrl: url,
+            ts: msg.ts,
+            from: msg.from,
+            fileId: file_id,
+          };
+
+          const exists = arr.some(
+            m =>
+              (m && m.fileId && m.fileId === file_id) ||
+              (m &&
+                m.from === msg.from &&
+                typeof m.text === 'string' &&
+                m.text === text &&
+                m.ts === msg.ts),
+          );
+          const nextArr = exists ? arr : arr.concat(incoming);
+
+          console.log('prevMsgs', prevMsgs);
+          return { ...prevMsgs, [roomKey]: nextArr };
+        });
+
+        // dọn RAM
+        const { [file_id]: _, ...rest } = prev;
+        return rest;
+      });
+    },
+    [userId, setMessages],
+  );
 
   const wsState = useMemo(
     () =>
@@ -505,9 +794,11 @@ export function SocpProvider({ children }) {
       onlineUsers,
       messages,
       activePeerId,
+      fileTransfers,
       setActivePeerId,
       sendDirectDM,
       sendPublicMessage,
+      sendFile,
     }),
     [
       userId,
@@ -515,8 +806,10 @@ export function SocpProvider({ children }) {
       onlineUsers,
       messages,
       activePeerId,
+      fileTransfers,
       sendDirectDM,
       sendPublicMessage,
+      sendFile,
     ],
   );
 

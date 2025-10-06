@@ -44,20 +44,43 @@ function pemTextToPemB64u(pemText) {
 }
 
 /* ---------------- RSA key generation (PEM base64url like Python) ---------------- */
-export async function generateRsaKeypair() {
-  // forge generate is sync
-  const kp = forge.pki.rsa.generateKeyPair({ bits: 4096, e: 0x10001 });
-  const privPem = forge.pki.privateKeyToPem(kp.privateKey); // PKCS#1 by default
-  // Convert to PKCS8 to mirror Python's serialization.PrivateFormat.PKCS8
-  const pkcs8 = forge.pki.privateKeyInfoToPem(
-    forge.pki.wrapRsaPrivateKey(forge.pki.privateKeyToAsn1(kp.privateKey)),
-  );
-  const pubPem = forge.pki.publicKeyToPem(kp.publicKey); // SPKI
+function derToPem(derBuf, label) {
+  const u8 = derBuf instanceof ArrayBuffer ? new Uint8Array(derBuf) : new Uint8Array(derBuf.buffer || derBuf);
+  const b64 = btoa(String.fromCharCode(...u8));
+  const lines = b64.match(/.{1,64}/g)?.join('\n') ?? b64;
+  return `-----BEGIN ${label}-----\n${lines}\n-----END ${label}-----\n`;
+}
 
-  return {
-    private_key_b64: pemTextToPemB64u(pkcs8),
-    public_key_b64: pemTextToPemB64u(pubPem),
-  };
+// UTF-8 string -> base64url
+function utf8ToB64u(str) {
+  const bytes = new TextEncoder().encode(str);              // UTF-8 -> Uint8Array
+  const b64  = btoa(String.fromCharCode(...bytes));         // -> base64
+  return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, ''); // -> base64url
+}
+export async function generateRsaKeypair() {
+    if (window.crypto?.subtle) {
+    const kp = await crypto.subtle.generateKey(
+      { name:'RSA-OAEP', modulusLength:4096, publicExponent:new Uint8Array([1,0,1]), hash:'SHA-256' },
+      true,
+      ['encrypt','decrypt']
+    );
+    const spki  = await crypto.subtle.exportKey('spki',  kp.publicKey);
+    const pkcs8 = await crypto.subtle.exportKey('pkcs8', kp.privateKey);
+    const pubPem  = derToPem(spki,  'PUBLIC KEY');
+    const privPem = derToPem(pkcs8, 'PRIVATE KEY');
+    return {
+      public_key_b64:  utf8ToB64u(pubPem),
+      private_key_b64: utf8ToB64u(privPem),
+    };
+  }
+  // Fallback forge nếu không có WebCrypto
+  const kp = forge.pki.rsa.generateKeyPair({ bits: 4096, e: 0x10001 });
+  const pkcs8 = forge.pki.privateKeyInfoToPem(
+    forge.pki.wrapRsaPrivateKey(forge.pki.privateKeyToAsn1(kp.privateKey))
+  );
+  const pubPem = forge.pki.publicKeyToPem(kp.publicKey);
+  return { public_key_b64: utf8ToB64u(pubPem), private_key_b64: utf8ToB64u(pkcs8) };
+
 }
 
 export async function generateRsaSignKeypair() {
@@ -206,7 +229,7 @@ export function rsaVerifyPss(publicKey, data, sigB64u) {
     md: forge.md.sha256.create(),
     mgf: forge.mgf.mgf1.create(forge.md.sha256.create()),
     // saltLength: calcPssMaxSaltLenForge(publicKey), // <-- MAX_LENGTH tương ứng
-    saltLength: 32, // <-- MAX_LENGTH tương ứng
+    saltLength: 32,
   });
   const sigBytes = forge.util.decode64(b64uToB64(sigB64u));
   return publicKey.verify(md.digest().bytes(), sigBytes, pss);
