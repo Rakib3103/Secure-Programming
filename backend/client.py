@@ -10,6 +10,7 @@ from websockets.asyncio.client import connect, ClientConnection
 from websockets.asyncio.server import ServerConnection
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK, WebSocketException
 
+from backend.models import ErrorPayload, ErrorCode
 from common import create_body
 from config import config
 from crypto import (
@@ -26,6 +27,7 @@ logger = logging.getLogger("Client")
 
 class Client:
     def __init__(self, server_host: str, server_port: int, reconnect_attempts: int = 3):
+        self._is_closed = False
         self.server_uri = f"ws://{server_host}:{server_port}/ws"
         self.user_id: Optional[str] = None
         self.private_key_b64: Optional[str] = None
@@ -115,7 +117,7 @@ class Client:
             case MsgType.FILE_END:
                 await self._handle_file_end(msg)
             case MsgType.ERROR:
-                logger.error("ERROR: %s", msg.payload)
+                await self._handle_error(msg)
             case _:
                 logger.error(f"Unknown message type: {mtype} for request: {msg}")
 
@@ -260,6 +262,16 @@ class Client:
         except Exception as e:
             logger.error(f"Failed to save file {file_path}: {e!r}")
 
+    async def _handle_error(self, msg):
+        payload = ErrorPayload(**msg.payload)
+        match payload.code:
+            case ErrorCode.NAME_IN_USE:
+                logger.error("Name already in use. Exiting...")
+                await self.close()
+                self._is_closed = True
+            case _:
+                logger.error(f"ERROR: {payload}")
+
     async def send_command(self, line: str):
         if not self.websocket:
             logger.error("not connected")
@@ -374,6 +386,10 @@ class Client:
                 except Exception:
                     logger.debug("close() failed", exc_info=True)
             self.websocket = None
+            self._is_closed = True
+
+    async def is_closed(self):
+        return self.websocket is None or self._is_closed
 
 
 async def interactive_client():
@@ -400,6 +416,12 @@ async def interactive_client():
         await client.connect()
     except Exception as e:
         logger.error("giving up connecting to %s:%s: %r", host, port, e)
+        return
+
+    await asyncio.sleep(1.0) # wait a bit
+
+    if await client.is_closed():
+        logger.error("CONNECTION CLOSED")
         return
 
     print("Commands:")
