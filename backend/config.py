@@ -8,8 +8,8 @@ class Config:
     def __init__(self):
         # Core server settings
         self.host: str = os.getenv("HOST", "0.0.0.0")
-        self.port: int = int(os.getenv("PORT", "8082"))
-        self.logging_level = logging.DEBUG
+        self.port: int = int(os.getenv("PORT", "8081"))
+        self.logging_level = logging.INFO
         self.logging_format = "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s"
 
         # DB
@@ -31,17 +31,17 @@ class Config:
             self.bootstrap_servers = [
                 {
                     "host": os.getenv("BOOTSTRAP_HOST_1", "127.0.0.1").strip(),
-                    "port": int(os.getenv("BOOTSTRAP_PORT_1", "8081").strip()),
+                    "port": int(os.getenv("BOOTSTRAP_PORT_1", "8000").strip()),
                     "pubkey": os.getenv("BOOTSTRAP_PUBKEY_1", "")
                 },
                 {
                     "host": os.getenv("BOOTSTRAP_HOST_2", "127.0.0.1").strip(),
-                    "port": int(os.getenv("BOOTSTRAP_PORT_2", "8083").strip()),
+                    "port": int(os.getenv("BOOTSTRAP_PORT_2", "8001").strip()),
                     "pubkey": os.getenv("BOOTSTRAP_PUBKEY_2", "")
                 },
                 {
                     "host": os.getenv("BOOTSTRAP_HOST_3", "127.0.0.1").strip(),
-                    "port": int(os.getenv("BOOTSTRAP_PORT_3", "8085").strip()),
+                    "port": int(os.getenv("BOOTSTRAP_PORT_3", "8002").strip()),
                     "pubkey": os.getenv("BOOTSTRAP_PUBKEY_3", "")
                 }
             ]
